@@ -9,6 +9,7 @@ wheels/
 .ruff_cache/
 
 *.SC2Mod
+*_translated*
 
 # venv
 .venv

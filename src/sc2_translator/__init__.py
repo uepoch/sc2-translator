@@ -341,7 +341,7 @@ def main(
         )
         add_file_to_mpq(
             mpq_extractor_path,
-            input_sc2mod_file,
+            sc2mod_file,
             translated_file,
             "enUS.SC2Data\\LocalizedData\\GameStrings.txt",
         )
@@ -349,7 +349,7 @@ def main(
             os.curdir, pathlib.Path(input_sc2mod_file).stem + "_translated.SC2Mod"
         )
         if replace:
-            shutil.copyfile(input_sc2mod_file, output_mod_file + ".bak")
+            shutil.copyfile(sc2mod_file, input_sc2mod_file + ".bak")
             output_mod_file = input_sc2mod_file
         shutil.move(input_sc2mod_file, output_mod_file)
         shutil.move(

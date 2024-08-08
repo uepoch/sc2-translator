@@ -23,6 +23,9 @@ class ModelChoice(str, Enum):
     MIXTRAL = "mixtral-8x7b-32768"
 
 
+CONCURRENCY_SEM = asyncio.Semaphore(10)
+
+
 MPQ_EXTRACTOR_PATH = ()
 GROQ_API = os.getenv("GROQ_API")
 
@@ -77,7 +80,7 @@ def add_file_to_mpq(extractor_path: str, modfile: str, file: str, path: str):
 
 def fetch_file_from_mpq(extractor_path: str, modfile: str, file: str, outpath: str):
     print(f"Fetching {file} from {modfile}")
-    cmd = subprocess.run([extractor_path, modfile, "-e", file, "-f", "-o", outpath])
+    cmd = subprocess.run([extractor_path, modfile, "-e", file, "-o", outpath])
     try:
         cmd.check_returncode()
     except subprocess.CalledProcessError as e:
@@ -87,17 +90,18 @@ def fetch_file_from_mpq(extractor_path: str, modfile: str, file: str, outpath: s
 async def execute_query(inputs: list[dict[str, str]], model: ModelChoice) -> str:
     assert inputs
     try:
-        resp = await AsyncGroq(api_key=GROQ_API).chat.completions.create(
-            model=model.value,
-            messages=inputs,
-            max_tokens=MAX_TOKENS,
-            stream=False,
-            temperature=1,
-        )
-        content = resp.choices[0].message.content
-        if os.getenv("DEBUG"):
-            print(content)
-        return content
+        async with CONCURRENCY_SEM:
+            resp = await AsyncGroq(api_key=GROQ_API).chat.completions.create(
+                model=model.value,
+                messages=inputs,
+                max_tokens=MAX_TOKENS,
+                stream=False,
+                temperature=1,
+            )
+            content = resp.choices[0].message.content
+            if os.getenv("DEBUG"):
+                print(content)
+            return content
     except Exception as e:
         print(f"[red]Error: {e}[/red]")
         raise e
@@ -331,7 +335,7 @@ def main(
         )
         asyncio.run(
             amain(
-                path.join(temp_dir, cn_file),
+                path.join(temp_dir, cn_file.rsplit("\\", 1)[-1]),
                 leftovers,
                 translated_file,
                 auto_continue,

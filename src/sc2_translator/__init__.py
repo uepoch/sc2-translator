@@ -15,6 +15,7 @@ import tempfile
 from enum import Enum
 from os import path
 
+
 class ModelChoice(str, Enum):
     STRONG = "llama-3.1-70b-versatile"
     FAST = "llama-3.1-8b-instant"
@@ -37,8 +38,9 @@ CONSISTENCY_BASE_INPUTS = [
     You will be provided with <KEY>=<VALUE> lines, where VALUE is a localised string for a Starcraft 2 Unit, tooltip or ability.
     Make sure entries associated with the same unit are translated in a consistent way. (e.g. if you see "Avatar" 3 times and "Zelot" once, favor using "Avatar" for all four)
 
-    You do not HAVE to modify values if they are already in English and consistent with their neighbours.
-    DO NOT repeat KEY name in translated VALUE if it looks like a unit.
+    Do not modify values if they are already in English and consistent with their neighbours.
+    You still have to OUTPUT "<KEY>=<VALUE>" lines for each input line you receive.
+    DO NOT repeat KEY name in VALUE if it looks like a unit.
     Only output the "<KEY>=<VALUE>" lines.
 """,
     },
@@ -126,7 +128,9 @@ def batchify(lines: list[str]) -> Generator[list[str], None, None]:
         yield cur
 
 
-async def query_batch(base_query, batch, progress: Progress, task: TaskID, model: ModelChoice, retry=True):
+async def query_batch(
+    base_query, batch, progress: Progress, task: TaskID, model: ModelChoice, retry=True
+):
     inputs = base_query + [{"role": "user", "content": "\n".join(batch)}]
     try:
         result = await execute_query(inputs, model)
@@ -136,7 +140,9 @@ async def query_batch(base_query, batch, progress: Progress, task: TaskID, model
         if retry:
             progress.console.print(f"[yellow]Retrying batch due to error: {e}[/yellow]")
             asyncio.sleep(10)
-            return await query_batch(base_query, batch, progress, task, model, retry=False)
+            return await query_batch(
+                base_query, batch, progress, task, model, retry=False
+            )
         else:
             progress.console.print(f"[red]Batch query failed after retry: {e}[/red]")
             progress.update(task, advance=len(batch))
@@ -160,7 +166,9 @@ async def process_batch(
     ) as progress:
         task = progress.add_task("[cyan]Processing lines...", total=len(lines))
 
-        tasks = [query_batch(base_query, batch, progress, task, model) for batch in batches]
+        tasks = [
+            query_batch(base_query, batch, progress, task, model) for batch in batches
+        ]
         results = await asyncio.gather(*tasks)
 
         for batch, result in zip(batches, results):
@@ -217,7 +225,11 @@ def clean_dataset(lines: dict[str, str], outputs: dict[str, str], do_leftovers: 
 
 
 async def process_lines(
-    lines: dict[str, str], base_query, process_leftovers, auto_continue, model: ModelChoice
+    lines: dict[str, str],
+    base_query,
+    process_leftovers,
+    auto_continue,
+    model: ModelChoice,
 ):
     # First, sort the lines by last component of the key.
     # Example: Abil/Foo/02, Abil/Bar/03, Abil/Baz/01
@@ -319,7 +331,12 @@ def main(
         )
         asyncio.run(
             amain(
-                path.join(temp_dir, cn_file), leftovers, translated_file, auto_continue, consistency_pass, model
+                path.join(temp_dir, cn_file),
+                leftovers,
+                translated_file,
+                auto_continue,
+                consistency_pass,
+                model,
             )
         )
         add_file_to_mpq(

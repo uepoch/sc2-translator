@@ -1,0 +1,3 @@
+[submodule "MPQExtractor"]
+	path = MPQExtractor
+	url = git@github.com:uepoch/MPQExtractor.git

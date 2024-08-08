@@ -267,7 +267,7 @@ async def amain(
     if not output:
         output = pathlib.Path(file).stem + "_translated.txt"
     print("[green]Loading original file...[/green]")
-    lines = lines_to_dict(load_file(file)[:100])
+    lines = lines_to_dict(load_file(file))
     print("[green]Translating...[/green]")
     outputs, failed_lines = await process_lines(
         lines, TRANSLATE_BASE_INPUTS, leftovers, auto_continue, model

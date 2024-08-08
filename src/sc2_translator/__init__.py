@@ -25,7 +25,6 @@ class ModelChoice(str, Enum):
 
 MPQ_EXTRACTOR_PATH = ()
 GROQ_API = os.getenv("GROQ_API")
-GROQ_CLIENT = AsyncGroq(api_key=GROQ_API)
 
 if os.getenv("DEBUG"):
     install(show_locals=True)
@@ -88,7 +87,7 @@ def fetch_file_from_mpq(extractor_path: str, modfile: str, file: str, outpath: s
 async def execute_query(inputs: list[dict[str, str]], model: ModelChoice) -> str:
     assert inputs
     try:
-        resp = await GROQ_CLIENT.chat.completions.create(
+        resp = await AsyncGroq(api_key=GROQ_API).chat.completions.create(
             model=model.value,
             messages=inputs,
             max_tokens=MAX_TOKENS,
@@ -295,7 +294,7 @@ async def amain(
 
 
 def main(
-    sc2mod_file: str,
+    input_sc2mod_file: str,
     groq_api: str = GROQ_API,
     leftovers: bool = True,
     output: str = None,
@@ -303,6 +302,7 @@ def main(
     consistency_pass: bool = True,
     model: ModelChoice = ModelChoice.STRONG,
     mpq_extractor_path: str = os.getenv("MPQ_EXTRACTOR_PATH"),
+    replace: bool = False,
 ):
     if not groq_api:
         print(
@@ -318,11 +318,11 @@ def main(
     # New Temporary folder
     with tempfile.TemporaryDirectory(delete=False) as temp_dir:
         sc2mod_file = shutil.copyfile(
-            sc2mod_file,
-            path.join(temp_dir, pathlib.Path(sc2mod_file).name),
+            input_sc2mod_file,
+            path.join(temp_dir, pathlib.Path(input_sc2mod_file).name),
         )
         translated_file = path.join(temp_dir, "translated.txt")
-        cn_file = "zhCN.SC2Data/LocalizedData/GameStrings.txt"
+        cn_file = "zhCN.SC2Data\\LocalizedData\\GameStrings.txt"
         fetch_file_from_mpq(
             mpq_extractor_path,
             sc2mod_file,
@@ -341,14 +341,17 @@ def main(
         )
         add_file_to_mpq(
             mpq_extractor_path,
-            sc2mod_file,
+            input_sc2mod_file,
             translated_file,
-            "enUS.SC2Data/LocalizedData/GameStrings.txt",
+            "enUS.SC2Data\\LocalizedData\\GameStrings.txt",
         )
         output_mod_file = output or path.join(
-            os.curdir, pathlib.Path(sc2mod_file).stem + "_translated.SC2Mod"
+            os.curdir, pathlib.Path(input_sc2mod_file).stem + "_translated.SC2Mod"
         )
-        shutil.move(sc2mod_file, output_mod_file)
+        if replace:
+            shutil.copyfile(input_sc2mod_file, output_mod_file + ".bak")
+            output_mod_file = input_sc2mod_file
+        shutil.move(input_sc2mod_file, output_mod_file)
         shutil.move(
             translated_file,
             path.join(path.dirname(output_mod_file), "GameStrings_translated.txt"),

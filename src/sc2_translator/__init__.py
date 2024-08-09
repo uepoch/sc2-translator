@@ -356,9 +356,9 @@ def main(
             os.curdir, pathlib.Path(input_sc2mod_file).stem + "_translated.SC2Mod"
         )
         if replace:
-            shutil.copyfile(sc2mod_file, input_sc2mod_file + ".bak")
+            shutil.copyfile(input_sc2mod_file, input_sc2mod_file + ".bak")
             output_mod_file = input_sc2mod_file
-        shutil.copyfile(input_sc2mod_file, output_mod_file)
+        shutil.copyfile(sc2mod_file, output_mod_file)
         shutil.copyfile(
             translated_file + '.before_consistency',
             path.join(path.dirname(output_mod_file), "GameStrings_translated_before_consistency.txt"),

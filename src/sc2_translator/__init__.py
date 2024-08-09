@@ -60,6 +60,8 @@ DO NOT repeat KEY name in translated VALUE if it looks like a unit.
 For abilities names, take inspiration of the english key to help with translation
 Ensure the translated value is grammatically correct and makes sense in the context of the Starcraft 2 universe.
 Similar Keys often represent the same unit, try to be consistent when translating values for similar keys.
+Be consice, avoid unnecessary long sentences.
+Use </n> in place of a new line.
 
 Only output the "<KEY>=<VALUE>" lines.
 """,
@@ -96,7 +98,7 @@ async def execute_query(inputs: list[dict[str, str]], model: ModelChoice) -> str
                 messages=inputs,
                 max_tokens=MAX_TOKENS,
                 stream=False,
-                temperature=1,
+                temperature=0.7,
             )
             content = resp.choices[0].message.content
             if os.getenv("DEBUG"):
@@ -277,10 +279,11 @@ async def amain(
     )
     # filter out random trash that is not in the original file
     outputs = {key: value for key, value in outputs.items() if key in lines}
+    write_file(output + '.before_consistency', [f"""{key}={value}""" for key, value in sorted(outputs.items())])
     if consistency_pass:
         print("[green]Consistency pass...[/green]")
         outputs, consistent_failed_lines = await process_lines(
-            outputs, CONSISTENCY_BASE_INPUTS, False, auto_continue, model
+            outputs, CONSISTENCY_BASE_INPUTS, False, auto_continue, ModelChoice.GEMMA
         )
         failed_lines.extend(consistent_failed_lines)
 
@@ -355,8 +358,12 @@ def main(
         if replace:
             shutil.copyfile(sc2mod_file, input_sc2mod_file + ".bak")
             output_mod_file = input_sc2mod_file
-        shutil.move(input_sc2mod_file, output_mod_file)
-        shutil.move(
+        shutil.copyfile(input_sc2mod_file, output_mod_file)
+        shutil.copyfile(
+            translated_file + '.before_consistency',
+            path.join(path.dirname(output_mod_file), "GameStrings_translated_before_consistency.txt"),
+        )
+        shutil.copyfile(
             translated_file,
             path.join(path.dirname(output_mod_file), "GameStrings_translated.txt"),
         )

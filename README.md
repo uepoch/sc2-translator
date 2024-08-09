@@ -26,6 +26,8 @@ export MPQ_EXTRACTOR_PATH="MPQExtractor/build/bin/MPQExtractor"
 
 ```
 
+The consistency pass is done with the Gemma2 model, and tend to hallucinate some sentences that are not in the original file.
+I would recommend to use --no-consistency-pass if you want to avoid this at the cost of some extra wonky unit names.
 
 ## Usage
 

@@ -257,25 +257,34 @@ async def process_lines(
     return outputs, failed_lines
 
 
-async def amain(
+async def translate_file(
     file: str,
     leftovers: bool,
     output: str | None,
     auto_continue: bool,
     consistency_pass: bool,
     model: ModelChoice,
-):
+    reference: dict[str, str] | None,
+) -> bool:
     if not output:
         output = pathlib.Path(file).stem + "_translated.txt"
     print("[green]Loading original file...[/green]")
     lines = lines_to_dict(load_file(file))
+
+    if reference:
+        print(f"[yellow]Ignoring {len(reference)} keys.[/yellow]")
+        lines = {key: value for key, value in lines.items() if key not in reference}
+    
+    if not lines:
+        print("[red]No lines to translate.[/red]")
+        return False
+
     print("[green]Translating...[/green]")
     outputs, failed_lines = await process_lines(
         lines, TRANSLATE_BASE_INPUTS, leftovers, auto_continue, model
     )
     # filter out random trash that is not in the original file
     outputs = {key: value for key, value in outputs.items() if key in lines}
-    write_file(output + '.before_consistency', [f"""{key}={value}""" for key, value in sorted(outputs.items())])
     if consistency_pass:
         print("[green]Consistency pass...[/green]")
         outputs, consistent_failed_lines = await process_lines(
@@ -284,6 +293,8 @@ async def amain(
         failed_lines.extend(consistent_failed_lines)
 
     outputs = {key: value for key, value in outputs.items() if key in lines}
+    if reference:
+        outputs.update(reference)
 
     if failed_lines:
         failed_lines = sorted(set(failed_lines))
@@ -293,11 +304,16 @@ async def amain(
         )
     else:
         print("[green]All lines translated successfully![/green]")
-    write_file(output, [f"""{key}={value}""" for key, value in sorted(outputs.items())])
+    if output:
+        write_file(output, [f"""{key}={value}""" for key, value in sorted(outputs.items())])
+        print(f"[green]Translated file saved to {output}[/green]")
+        return True
+    else:
+        return False
 
 
 def main(
-    input_sc2mod_file: str,
+    input_sc2mod_files: list[str],
     groq_api: str = GROQ_API,
     leftovers: bool = True,
     output: str = None,
@@ -306,6 +322,7 @@ def main(
     model: ModelChoice = ModelChoice.STRONG,
     mpq_extractor_path: str = os.getenv("MPQ_EXTRACTOR_PATH"),
     replace: bool = False,
+    re_use_existing: bool = True,
 ):
     if not groq_api:
         print(
@@ -317,14 +334,25 @@ def main(
             "[red]MPQ_EXTRACTOR_PATH environment variable not set. Please set it to your MPQ Extractor path.[/red]"
         )
         exit(1)
-    if not path.exists(input_sc2mod_file):
-        print(f"[red]SC2Mod {input_sc2mod_file} does not exist.[/red]")
-        exit(1)
+    for input_sc2mod_file in input_sc2mod_files:
+        if not path.exists(input_sc2mod_file):
+            print(f"[red] {input_sc2mod_file} does not exist.[/red]")
+            exit(1)
+        if not input_sc2mod_file.rstrip('/').endswith(('.SC2Mod', '.SC2Map')):
+            print(f"[red] {input_sc2mod_file} is not a SC2Mod file.[/red]")
+            exit(1)
+        
+    async def main_async():
+        for input_sc2mod_file in input_sc2mod_files:
+            await process_file(input_sc2mod_file, mpq_extractor_path, output, leftovers, auto_continue, consistency_pass, model, replace, re_use_existing)
 
+    asyncio.run(main_async())
+
+async def process_file(input_sc2mod_file, mpq_extractor_path, output, leftovers, auto_continue, consistency_pass, model, replace, re_use_existing):
     is_folder = is_mod_folder(input_sc2mod_file)
 
     # New Temporary folder
-    with tempfile.TemporaryDirectory(delete=False) as temp_dir:
+    with tempfile.TemporaryDirectory() as temp_dir:
         if is_folder:
             sc2mod_file = shutil.copytree(input_sc2mod_file, path.join(temp_dir, pathlib.Path(input_sc2mod_file).name), ignore=ignore_all_but_txt)
         else:
@@ -332,7 +360,20 @@ def main(
                 input_sc2mod_file,
                 path.join(temp_dir, pathlib.Path(input_sc2mod_file).name),
             )
+        
+        if re_use_existing and mpq_has_file(mpq_extractor_path, sc2mod_file, get_localized_data_path(Locale.enUS, "GameStrings")):
+            fetch_file_from_mpq(
+                mpq_extractor_path,
+                sc2mod_file,
+                get_localized_data_path(Locale.enUS, "GameStrings"),
+                temp_dir,
+            )
+            reference = lines_to_dict(load_file(path.join(temp_dir, "GameStrings.txt")))
+        else:
+            reference = None
+        
         translated_file = path.join(temp_dir, "translated.txt")
+        
         fetch_file_from_mpq(
             mpq_extractor_path,
             sc2mod_file,
@@ -344,23 +385,23 @@ def main(
             mpq_copy_file(
                 mpq_extractor_path,
                 sc2mod_file,
-                get_localized_data_path(Locale.enUS, "GameHotkeys"),
                 get_localized_data_path(Locale.zhCN, "GameHotkeys"),
+                get_localized_data_path(Locale.enUS, "GameHotkeys"),
             )
-            print("[green]Copied GameHotkeys.txt to GameHotkeys_translated.txt.[/green]")
+            print("[green]Copied GameHotkeys.txt.[/green]")
         else:
             print("[yellow]No GameHotkeys.txt file found, skipping.[/yellow]")
 
-        asyncio.run(
-            amain(
-                path.join(temp_dir, get_localized_data_path(Locale.zhCN, "GameStrings").rsplit("\\", 1)[-1]),
-                leftovers,
+        if not await translate_file(
+            path.join(temp_dir, get_localized_data_path(Locale.zhCN, "GameStrings").rsplit("\\", 1)[-1]),
+            leftovers,
                 translated_file,
                 auto_continue,
                 consistency_pass,
                 model,
-            )
-        )
+                reference,
+            ):
+                return
         add_file_to_mpq(
             mpq_extractor_path,
             sc2mod_file,
@@ -368,17 +409,18 @@ def main(
             get_localized_data_path(Locale.enUS, "GameStrings"),
         )
 
-
+        mod_path = pathlib.Path(input_sc2mod_file)
+        
         output_mod_file = output or path.join(
-            os.curdir, pathlib.Path(input_sc2mod_file).stem + "_translated.SC2Mod"
+            os.curdir, mod_path.stem + "_translated" + mod_path.suffix
         )
+
         if replace:
-            p = pathlib.Path(input_sc2mod_file)
             if is_folder:
-                shutil.copytree(input_sc2mod_file, p.with_suffix(".bak"), dirs_exist_ok=True, ignore=ignore_all_but_txt)
+                shutil.copytree(input_sc2mod_file, mod_path.name + ".bak", dirs_exist_ok=True, ignore=ignore_all_but_txt)
                 shutil.copytree(sc2mod_file, input_sc2mod_file, dirs_exist_ok=True)
             else:
-                shutil.copyfile(input_sc2mod_file, p.with_suffix(".bak"))
+                shutil.copyfile(input_sc2mod_file, mod_path.name + ".bak")
                 shutil.copyfile(sc2mod_file, input_sc2mod_file)
             output_mod_file = input_sc2mod_file
         else:
@@ -386,14 +428,6 @@ def main(
                 shutil.copytree(sc2mod_file, output_mod_file, dirs_exist_ok=True)
             else:
                 shutil.copyfile(sc2mod_file, output_mod_file)
-        shutil.copyfile(
-            translated_file + '.before_consistency',
-            path.join(path.dirname(output_mod_file), "GameStrings_translated_before_consistency.txt"),
-        )
-        shutil.copyfile(
-            translated_file,
-            path.join(path.dirname(output_mod_file), "GameStrings_translated.txt"),
-        )
         print(f"[green]Finished! The file is located at {output_mod_file}[/green]")
 
 

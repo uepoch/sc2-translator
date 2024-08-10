@@ -16,12 +16,9 @@ def has_en_hotkeys(mpq_extractor_path, sc2mod_file) -> bool:
     files = list_file_from_mpq(mpq_extractor_path, sc2mod_file)
     return any(file.endswith("enUS.SC2Data\\LocalizedData\\GameHotkeys.txt") for file in files)
 
-def fix_en_hotkeys(mpq_extractor_path, sc2mod_file, yes: bool = True):
-    if not has_en_hotkeys(mpq_extractor_path, sc2mod_file):
-        print(f"[red]Found bad key in {sc2mod_file}[/red]")
-        if not yes and not typer.confirm("Do you want to fix it?"):
-            print("[red]Exiting.[/red]")
-            exit(1)
+def fix_en_hotkeys(mpq_extractor_path, sc2mod_file, yes: bool = False):
+    if not has_en_hotkeys(mpq_extractor_path, sc2mod_file) or yes or not typer.confirm("Do you want to fix it?"):
+        print(f"[green]Replacing enUS.SC2Data\\LocalizedData\\GameHotkeys.txt in {sc2mod_file}[/green]")
         with tempfile.TemporaryDirectory(delete=False) as temp_dir:
             fetch_file_from_mpq(mpq_extractor_path, sc2mod_file, "zhCN.SC2Data\\LocalizedData\\GameHotkeys.txt", temp_dir)
             add_file_to_mpq(
@@ -29,7 +26,7 @@ def fix_en_hotkeys(mpq_extractor_path, sc2mod_file, yes: bool = True):
             )       
             print(f"[green]Fixed {sc2mod_file}[/green]")
     else:
-        print(f"[green]No bad key found in {sc2mod_file}[/green]")
+        print(f"[green]Nothing to do[/green]")
 
 def main(sc2mod_file: str, yes: bool = True, mpq_extractor_path: str = os.getenv("MPQ_EXTRACTOR_PATH")):
     if not mpq_has_file(mpq_extractor_path, sc2mod_file, "zhCN.SC2Data\\LocalizedData\\GameHotkeys.txt"):

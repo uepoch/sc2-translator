@@ -28,3 +28,4 @@ packages = ["src/sc2_translator"]
 [project.scripts]
 sc2-translator = "sc2_translator:_cli_main"
 path-fixer = "sc2_translator.path_fixer:_cli_main"
+hotkey-fixer = "sc2_translator.hotkey_fixer:_main"

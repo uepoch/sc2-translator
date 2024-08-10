@@ -2,34 +2,12 @@ import os
 import subprocess
 import typer
 
-from . import add_file_to_mpq, fetch_file_from_mpq
+
+from .mpq import add_file_to_mpq, fetch_file_from_mpq, list_file_from_mpq, remove_file_from_mpq
 import tempfile
 
 from os import path
 from rich import print
-
-
-def list_file_from_mpq(mpq_extractor_path, sc2mod_file) -> list[str]:
-    with tempfile.NamedTemporaryFile() as temp_file:
-        subprocess.run(
-            [mpq_extractor_path, sc2mod_file, "-l", temp_file.name]
-        ).check_returncode()
-        with open(temp_file.name, "r") as f:
-            return [line.strip() for line in f.readlines()]
-
-
-def remove_file_from_mpq(mpq_extractor_path, sc2mod_file, file: str):
-    subprocess.run([mpq_extractor_path, sc2mod_file, "--rm", file]).check_returncode()
-
-
-def find_bad_mod(mpq_extractor_path, sc2mod_file) -> str:
-    files = list_file_from_mpq(mpq_extractor_path, sc2mod_file)
-    return any()
-    for file in files:
-        if file.endswith("\\GameStrings.txt"):
-            return True
-    return False
-
 
 def main(
     sc2mod_file: str,

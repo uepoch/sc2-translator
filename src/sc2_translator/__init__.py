@@ -15,6 +15,16 @@ import tempfile
 from enum import Enum
 from os import path
 
+from sc2_translator.tools import ignore_all_but_txt
+
+
+class Locale(str, Enum):
+    zhCN = "zhCN"
+    enUS = "enUS"
+
+
+def get_localized_data_path(locale: Locale, object_name: str):
+    return f"{locale.value}.SC2Data\\LocalizedData\\{object_name}.txt"
 
 class ModelChoice(str, Enum):
     STRONG = "llama-3.1-70b-versatile"
@@ -70,24 +80,7 @@ Only output the "<KEY>=<VALUE>" lines.
 
 MAX_TOKENS = 7000
 
-
-def add_file_to_mpq(extractor_path: str, modfile: str, file: str, path: str):
-    print(f"Adding {file} to {modfile}")
-    cmd = subprocess.run([extractor_path, modfile, "--addfile", f"{file}={path}"])
-    try:
-        cmd.check_returncode()
-    except subprocess.CalledProcessError as e:
-        print(f"[red]Error adding file to MPQ: {e}[/red]")
-
-
-def fetch_file_from_mpq(extractor_path: str, modfile: str, file: str, outpath: str):
-    print(f"Fetching {file} from {modfile}")
-    cmd = subprocess.run([extractor_path, modfile, "-e", file, "-o", outpath])
-    try:
-        cmd.check_returncode()
-    except subprocess.CalledProcessError as e:
-        print(f"[red]Error adding file to MPQ: {e}[/red]")
-
+from .mpq import add_file_to_mpq, fetch_file_from_mpq, is_mod_folder, mpq_copy_file, mpq_has_file
 
 async def execute_query(inputs: list[dict[str, str]], model: ModelChoice) -> str:
     assert inputs
@@ -245,6 +238,9 @@ async def process_lines(
     missing = clean_dataset(lines, outputs, process_leftovers)
     while missing:
         print(f"[red] operation is failing for {len(missing)} lines.[/red]")
+        if os.getenv("DEBUG"):
+            for key, value in missing.items():
+                print(f"[red]{key}={value}[/red]")
         if auto_continue or Confirm.ask(
             "Do you want to retry them?", default=True, show_default=False
         ):
@@ -306,7 +302,7 @@ def main(
     leftovers: bool = True,
     output: str = None,
     auto_continue: bool = False,
-    consistency_pass: bool = True,
+    consistency_pass: bool = False,
     model: ModelChoice = ModelChoice.STRONG,
     mpq_extractor_path: str = os.getenv("MPQ_EXTRACTOR_PATH"),
     replace: bool = False,
@@ -321,24 +317,43 @@ def main(
             "[red]MPQ_EXTRACTOR_PATH environment variable not set. Please set it to your MPQ Extractor path.[/red]"
         )
         exit(1)
+    if not path.exists(input_sc2mod_file):
+        print(f"[red]SC2Mod {input_sc2mod_file} does not exist.[/red]")
+        exit(1)
+
+    is_folder = is_mod_folder(input_sc2mod_file)
 
     # New Temporary folder
     with tempfile.TemporaryDirectory(delete=False) as temp_dir:
-        sc2mod_file = shutil.copyfile(
-            input_sc2mod_file,
-            path.join(temp_dir, pathlib.Path(input_sc2mod_file).name),
-        )
+        if is_folder:
+            sc2mod_file = shutil.copytree(input_sc2mod_file, path.join(temp_dir, pathlib.Path(input_sc2mod_file).name), ignore=ignore_all_but_txt)
+        else:
+            sc2mod_file = shutil.copyfile(
+                input_sc2mod_file,
+                path.join(temp_dir, pathlib.Path(input_sc2mod_file).name),
+            )
         translated_file = path.join(temp_dir, "translated.txt")
-        cn_file = "zhCN.SC2Data\\LocalizedData\\GameStrings.txt"
         fetch_file_from_mpq(
             mpq_extractor_path,
             sc2mod_file,
-            cn_file,
+            get_localized_data_path(Locale.zhCN, "GameStrings"),
             temp_dir,
         )
+        # Make sure we copy the Hotkeys.txt file
+        if mpq_has_file(mpq_extractor_path, sc2mod_file, get_localized_data_path(Locale.zhCN, "GameHotkeys")):
+            mpq_copy_file(
+                mpq_extractor_path,
+                sc2mod_file,
+                get_localized_data_path(Locale.enUS, "GameHotkeys"),
+                get_localized_data_path(Locale.zhCN, "GameHotkeys"),
+            )
+            print("[green]Copied GameHotkeys.txt to GameHotkeys_translated.txt.[/green]")
+        else:
+            print("[yellow]No GameHotkeys.txt file found, skipping.[/yellow]")
+
         asyncio.run(
             amain(
-                path.join(temp_dir, cn_file.rsplit("\\", 1)[-1]),
+                path.join(temp_dir, get_localized_data_path(Locale.zhCN, "GameStrings").rsplit("\\", 1)[-1]),
                 leftovers,
                 translated_file,
                 auto_continue,
@@ -350,15 +365,27 @@ def main(
             mpq_extractor_path,
             sc2mod_file,
             translated_file,
-            "enUS.SC2Data\\LocalizedData\\GameStrings.txt",
+            get_localized_data_path(Locale.enUS, "GameStrings"),
         )
+
+
         output_mod_file = output or path.join(
             os.curdir, pathlib.Path(input_sc2mod_file).stem + "_translated.SC2Mod"
         )
         if replace:
-            shutil.copyfile(input_sc2mod_file, input_sc2mod_file + ".bak")
+            p = pathlib.Path(input_sc2mod_file)
+            if is_folder:
+                shutil.copytree(input_sc2mod_file, p.with_suffix(".bak"), dirs_exist_ok=True, ignore=ignore_all_but_txt)
+                shutil.copytree(sc2mod_file, input_sc2mod_file, dirs_exist_ok=True)
+            else:
+                shutil.copyfile(input_sc2mod_file, p.with_suffix(".bak"))
+                shutil.copyfile(sc2mod_file, input_sc2mod_file)
             output_mod_file = input_sc2mod_file
-        shutil.copyfile(sc2mod_file, output_mod_file)
+        else:
+            if is_folder:
+                shutil.copytree(sc2mod_file, output_mod_file, dirs_exist_ok=True)
+            else:
+                shutil.copyfile(sc2mod_file, output_mod_file)
         shutil.copyfile(
             translated_file + '.before_consistency',
             path.join(path.dirname(output_mod_file), "GameStrings_translated_before_consistency.txt"),

@@ -15,6 +15,7 @@ import tempfile
 from enum import Enum
 from os import path
 
+from groq import RateLimitError
 from sc2_translator.tools import ignore_all_but_txt
 
 
@@ -25,6 +26,7 @@ class Locale(str, Enum):
 
 def get_localized_data_path(locale: Locale, object_name: str):
     return f"{locale.value}.SC2Data\\LocalizedData\\{object_name}.txt"
+
 
 class ModelChoice(str, Enum):
     STRONG = "llama-3.1-70b-versatile"
@@ -71,16 +73,24 @@ For abilities names, take inspiration of the english key to help with translatio
 Ensure the translated value is grammatically correct and makes sense in the context of the Starcraft 2 universe.
 Similar Keys often represent the same unit, try to be consistent when translating values for similar keys.
 Be consice, avoid unnecessary long sentences.
-Use </n> in place of a new line.
+Use "<n/>" where a new line is appropriate.
 
 Only output the "<KEY>=<VALUE>" lines.
+YOU MUST OUTPUT AN EQUAL SIGN IN EVERY SINGLE LINE.
 """,
     },
 ]
 
-MAX_TOKENS = 7000
+MAX_TOKENS = 8000
 
-from .mpq import add_file_to_mpq, fetch_file_from_mpq, is_mod_folder, mpq_copy_file, mpq_has_file
+from .mpq import (
+    add_file_to_mpq,
+    fetch_file_from_mpq,
+    is_mod_folder,
+    mpq_copy_file,
+    mpq_has_file,
+)
+
 
 async def execute_query(inputs: list[dict[str, str]], model: ModelChoice) -> str:
     assert inputs
@@ -134,10 +144,14 @@ async def query_batch(
         result = await execute_query(inputs, model)
         progress.update(task, advance=len(batch))
         return result
+    except RateLimitError as e:
+        retry_after = int(e.response.headers.get("retry-after", "30")) + 5
+        print(f"[red]Rate limit exceeded, waiting for {retry_after} seconds.[/red]")
+        await asyncio.sleep(retry_after)
+        return await query_batch(base_query, batch, progress, task, model, retry=False)
     except Exception as e:
         if retry:
             progress.console.print(f"[yellow]Retrying batch due to error: {e}[/yellow]")
-            asyncio.sleep(10)
             return await query_batch(
                 base_query, batch, progress, task, model, retry=False
             )
@@ -205,18 +219,22 @@ def lines_to_dict(lines: list[str]):
 def clean_dataset(lines: dict[str, str], outputs: dict[str, str], do_leftovers: bool):
     missing_keys = set(lines.keys()) - set(outputs.keys())
     remaining = {key: lines[key] for key in missing_keys}
+    outputs = {k: v for k, v in outputs.items() if k in lines}
     if len(remaining) > 0:
         print(f"[yellow]Missing {len(remaining)} lines.[/yellow]")
     if do_leftovers:
         # Check if any value still contain chinese characters
         leftovers = {
-            key: value
+            key: lines[key]
             for key, value in outputs.items()
             if regex.search(r"\p{Han}", value)
         }
+        leftovers.update(
+            {key: lines[key] for key, value in outputs.items() if "Original Lines:" in value and key in lines}
+        )
         if leftovers:
             print(
-                f"[yellow] {len(leftovers)} lines still had chinese characters.[/yellow]"
+                f"[yellow] {len(leftovers)} lines still had invalid characters.[/yellow]"
             )
         remaining.update(leftovers)
     return remaining
@@ -274,7 +292,7 @@ async def translate_file(
     if reference:
         print(f"[yellow]Ignoring {len(reference)} keys.[/yellow]")
         lines = {key: value for key, value in lines.items() if key not in reference}
-    
+
     if not lines:
         print("[red]No lines to translate.[/red]")
         return False
@@ -305,7 +323,9 @@ async def translate_file(
     else:
         print("[green]All lines translated successfully![/green]")
     if output:
-        write_file(output, [f"""{key}={value}""" for key, value in sorted(outputs.items())])
+        write_file(
+            output, [f"""{key}={value}""" for key, value in sorted(outputs.items())]
+        )
         print(f"[green]Translated file saved to {output}[/green]")
         return True
     else:
@@ -338,30 +358,60 @@ def main(
         if not path.exists(input_sc2mod_file):
             print(f"[red] {input_sc2mod_file} does not exist.[/red]")
             exit(1)
-        if not input_sc2mod_file.rstrip('/').endswith(('.SC2Mod', '.SC2Map')):
+        if not input_sc2mod_file.rstrip("/").endswith((".SC2Mod", ".SC2Map")):
             print(f"[red] {input_sc2mod_file} is not a SC2Mod file.[/red]")
             exit(1)
-        
+
     async def main_async():
         for input_sc2mod_file in input_sc2mod_files:
-            await process_file(input_sc2mod_file, mpq_extractor_path, output, leftovers, auto_continue, consistency_pass, model, replace, re_use_existing)
+            print(f"[cyan]Processing {input_sc2mod_file}...")
+            await process_file(
+                input_sc2mod_file,
+                mpq_extractor_path,
+                output,
+                leftovers,
+                auto_continue,
+                consistency_pass,
+                model,
+                replace,
+                re_use_existing,
+            )
 
     asyncio.run(main_async())
 
-async def process_file(input_sc2mod_file, mpq_extractor_path, output, leftovers, auto_continue, consistency_pass, model, replace, re_use_existing):
+
+async def process_file(
+    input_sc2mod_file,
+    mpq_extractor_path,
+    output,
+    leftovers,
+    auto_continue,
+    consistency_pass,
+    model,
+    replace,
+    re_use_existing,
+):
     is_folder = is_mod_folder(input_sc2mod_file)
 
     # New Temporary folder
     with tempfile.TemporaryDirectory() as temp_dir:
         if is_folder:
-            sc2mod_file = shutil.copytree(input_sc2mod_file, path.join(temp_dir, pathlib.Path(input_sc2mod_file).name), ignore=ignore_all_but_txt)
+            sc2mod_file = shutil.copytree(
+                input_sc2mod_file,
+                path.join(temp_dir, pathlib.Path(input_sc2mod_file).name),
+                ignore=ignore_all_but_txt,
+            )
         else:
             sc2mod_file = shutil.copyfile(
                 input_sc2mod_file,
                 path.join(temp_dir, pathlib.Path(input_sc2mod_file).name),
             )
-        
-        if re_use_existing and mpq_has_file(mpq_extractor_path, sc2mod_file, get_localized_data_path(Locale.enUS, "GameStrings")):
+
+        if re_use_existing and mpq_has_file(
+            mpq_extractor_path,
+            sc2mod_file,
+            get_localized_data_path(Locale.enUS, "GameStrings"),
+        ):
             fetch_file_from_mpq(
                 mpq_extractor_path,
                 sc2mod_file,
@@ -371,9 +421,9 @@ async def process_file(input_sc2mod_file, mpq_extractor_path, output, leftovers,
             reference = lines_to_dict(load_file(path.join(temp_dir, "GameStrings.txt")))
         else:
             reference = None
-        
+
         translated_file = path.join(temp_dir, "translated.txt")
-        
+
         fetch_file_from_mpq(
             mpq_extractor_path,
             sc2mod_file,
@@ -381,7 +431,11 @@ async def process_file(input_sc2mod_file, mpq_extractor_path, output, leftovers,
             temp_dir,
         )
         # Make sure we copy the Hotkeys.txt file
-        if mpq_has_file(mpq_extractor_path, sc2mod_file, get_localized_data_path(Locale.zhCN, "GameHotkeys")):
+        if mpq_has_file(
+            mpq_extractor_path,
+            sc2mod_file,
+            get_localized_data_path(Locale.zhCN, "GameHotkeys"),
+        ):
             mpq_copy_file(
                 mpq_extractor_path,
                 sc2mod_file,
@@ -393,15 +447,18 @@ async def process_file(input_sc2mod_file, mpq_extractor_path, output, leftovers,
             print("[yellow]No GameHotkeys.txt file found, skipping.[/yellow]")
 
         if not await translate_file(
-            path.join(temp_dir, get_localized_data_path(Locale.zhCN, "GameStrings").rsplit("\\", 1)[-1]),
+            path.join(
+                temp_dir,
+                get_localized_data_path(Locale.zhCN, "GameStrings").rsplit("\\", 1)[-1],
+            ),
             leftovers,
-                translated_file,
-                auto_continue,
-                consistency_pass,
-                model,
-                reference,
-            ):
-                return
+            translated_file,
+            auto_continue,
+            consistency_pass,
+            model,
+            reference,
+        ):
+            return
         add_file_to_mpq(
             mpq_extractor_path,
             sc2mod_file,
@@ -410,14 +467,19 @@ async def process_file(input_sc2mod_file, mpq_extractor_path, output, leftovers,
         )
 
         mod_path = pathlib.Path(input_sc2mod_file)
-        
+
         output_mod_file = output or path.join(
             os.curdir, mod_path.stem + "_translated" + mod_path.suffix
         )
 
         if replace:
             if is_folder:
-                shutil.copytree(input_sc2mod_file, mod_path.name + ".bak", dirs_exist_ok=True, ignore=ignore_all_but_txt)
+                shutil.copytree(
+                    input_sc2mod_file,
+                    mod_path.name + ".bak",
+                    dirs_exist_ok=True,
+                    ignore=ignore_all_but_txt,
+                )
                 shutil.copytree(sc2mod_file, input_sc2mod_file, dirs_exist_ok=True)
             else:
                 shutil.copyfile(input_sc2mod_file, mod_path.name + ".bak")

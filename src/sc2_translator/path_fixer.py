@@ -3,11 +3,17 @@ import subprocess
 import typer
 
 
-from .mpq import add_file_to_mpq, fetch_file_from_mpq, list_file_from_mpq, remove_file_from_mpq
+from .mpq import (
+    add_file_to_mpq,
+    fetch_file_from_mpq,
+    list_file_from_mpq,
+    remove_file_from_mpq,
+)
 import tempfile
 
 from os import path
 from rich import print
+
 
 def main(
     sc2mod_file: str,

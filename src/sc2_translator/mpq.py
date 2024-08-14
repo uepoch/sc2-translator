@@ -80,7 +80,10 @@ def fetch_file_from_mpq(extractor_path: str, sc2mod_file: str, file: str, outpat
         mpq_extractor_run(extractor_path, [sc2mod_file, "-e", file, "-o", outpath])
 
 
-def mpq_extractor_run(mpq_extractor_path, cmds: list[str]):
+def mpq_extractor_run(mpq_extractor_path: str, cmds: list[str]):
+    if not mpq_extractor_path or not os.path.exists(mpq_extractor_path):
+        print(f"[red]MPQ extractor not found at {mpq_extractor_path}[/red]")
+        exit(1)
     try:
         result = subprocess.run(
             [mpq_extractor_path, *cmds], capture_output=True, text=True, check=True

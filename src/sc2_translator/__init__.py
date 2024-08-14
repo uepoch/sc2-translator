@@ -16,16 +16,7 @@ from enum import Enum
 from os import path
 
 from groq import RateLimitError
-from sc2_translator.tools import ignore_all_but_txt
-
-
-class Locale(str, Enum):
-    zhCN = "zhCN"
-    enUS = "enUS"
-
-
-def get_localized_data_path(locale: Locale, object_name: str):
-    return f"{locale.value}.SC2Data\\LocalizedData\\{object_name}.txt"
+from sc2_translator.tools import Locale, get_localized_data_path, ignore_all_but_txt
 
 
 class ModelChoice(str, Enum):
@@ -37,8 +28,6 @@ class ModelChoice(str, Enum):
 
 CONCURRENCY_SEM = asyncio.Semaphore(10)
 
-
-MPQ_EXTRACTOR_PATH = ()
 GROQ_API = os.getenv("GROQ_API")
 
 if os.getenv("DEBUG"):
@@ -48,14 +37,26 @@ CONSISTENCY_BASE_INPUTS = [
     {
         "role": "system",
         "content": """
-    You are in LINE mode, and can only output "<KEY>=<VALUE>" lines.
-    You will be provided with <KEY>=<VALUE> lines, where VALUE is a localised string for a Starcraft 2 Unit, tooltip or ability.
-    Make sure entries associated with the same unit are translated in a consistent way. (e.g. if you see "Avatar" 3 times and "Zelot" once, favor using "Avatar" for all four)
+- You are in LINE mode, and can only output "<KEY>=<VALUE>" lines.
+- You will be provided with <KEY>=<VALUE> lines, where VALUE is the translated string for a Starcraft 2 Unit, ability or spell.
+- Ensure the translated value is grammatically correct and makes sense in the context of the Starcraft 2 universe.
+- Ensure similar keys are translated in a consistent way, correct names and descriptions to match if you find discrepancies.
 
-    Do not modify values if they are already in English and consistent with their neighbours.
-    You still have to OUTPUT "<KEY>=<VALUE>" lines for each input line you receive.
-    DO NOT repeat KEY name in VALUE if it looks like a unit.
-    Only output the "<KEY>=<VALUE>" lines.
+- Each Key is a unique identifier for a unit, ability or spell.
+- If the key contains "Tooltip", it is the description of the unit, ability or spell.
+- If the key contains "Name", it is the name of the unit, ability or spell.
+- If the key contains "Unit", it is the name of an unit.
+- If the key contains "Abil", it is the name of an ability.
+- If the key contains "Button", it is the name of a to build a unit or launch an ability.
+
+- If the text seems hallucinated, it is probably wrong. Fix it to the best of your ability.
+- Make sure to keep metatag like <c ...> or <d....> in the value
+- Ensure the translated value is grammatically correct and makes sense in the context of the Starcraft 2 universe.
+- Similar Keys often represent the same unit, try to be consistent when translating values for similar keys.
+- Be consice, avoid unnecessary long sentences.
+- Use "<n/>" where a new line is appropriate.
+- You are forbidden from outputting any other text than "<KEY>=<VALUE>" lines.
+- YOU MUST OUTPUT AN EQUAL SIGN IN EVERY SINGLE LINE.
 """,
     },
 ]
@@ -64,19 +65,24 @@ TRANSLATE_BASE_INPUTS = [
     {
         "role": "system",
         "content": """
-You will be provided with <KEY>=<VALUE> lines, where VALUE is a Chinese localised string for a Starcraft 2 Unit, spell or ability.
+- You are in LINE mode, and can only output "<KEY>=<VALUE>" lines.
+- You will be provided with <KEY>=<VALUE> lines, where VALUE is a Chinese localised string for a Starcraft 2 Unit, spell or ability.
+- Translate ONLY the chinese graphemes in the VALUE into English
 
-Translate ONLY the chinese graphemes in the VALUE into English, using the context of a Starcraft 2 universe.
+- Each Key is a unique identifier for a unit, ability or spell.
+- If the key contains "Tooltip", it is the description of the unit, ability or spell.
+- If the key contains "Name", it is the name of the unit, ability or spell.
+- If the key contains "Unit", it is the name of an unit.
+- If the key contains "Abil", it is the name of an ability.
+- If the key contains "Button", it is the name of a to build a unit or launch an ability.
 
-DO NOT repeat KEY name in translated VALUE if it looks like a unit.
-For abilities names, take inspiration of the english key to help with translation
-Ensure the translated value is grammatically correct and makes sense in the context of the Starcraft 2 universe.
-Similar Keys often represent the same unit, try to be consistent when translating values for similar keys.
-Be consice, avoid unnecessary long sentences.
-Use "<n/>" where a new line is appropriate.
-
-Only output the "<KEY>=<VALUE>" lines.
-YOU MUST OUTPUT AN EQUAL SIGN IN EVERY SINGLE LINE.
+- Make sure to keep metatag like <c ...> or <d....> in the value
+- Ensure the translated value is grammatically correct and makes sense in the context of the Starcraft 2 universe.
+- Similar Keys often represent the same unit, try to be consistent when translating values for similar keys.
+- Be consice, avoid unnecessary long sentences.
+- Use "<n/>" where a new line is appropriate.
+- You are forbidden from outputting any other text than "<KEY>=<VALUE>" lines.
+- YOU MUST OUTPUT AN EQUAL SIGN IN EVERY SINGLE LINE.
 """,
     },
 ]
@@ -306,7 +312,7 @@ async def translate_file(
     if consistency_pass:
         print("[green]Consistency pass...[/green]")
         outputs, consistent_failed_lines = await process_lines(
-            outputs, CONSISTENCY_BASE_INPUTS, False, auto_continue, ModelChoice.GEMMA
+            outputs, CONSISTENCY_BASE_INPUTS, False, auto_continue, ModelChoice.STRONG
         )
         failed_lines.extend(consistent_failed_lines)
 
@@ -410,12 +416,12 @@ async def process_file(
         if re_use_existing and mpq_has_file(
             mpq_extractor_path,
             sc2mod_file,
-            get_localized_data_path(Locale.enUS, "GameStrings"),
+            get_localized_data_path(Locale.enUS, "GameStrings.txt"),
         ):
             fetch_file_from_mpq(
                 mpq_extractor_path,
                 sc2mod_file,
-                get_localized_data_path(Locale.enUS, "GameStrings"),
+                get_localized_data_path(Locale.enUS, "GameStrings.txt"),
                 temp_dir,
             )
             reference = lines_to_dict(load_file(path.join(temp_dir, "GameStrings.txt")))
@@ -427,20 +433,20 @@ async def process_file(
         fetch_file_from_mpq(
             mpq_extractor_path,
             sc2mod_file,
-            get_localized_data_path(Locale.zhCN, "GameStrings"),
+            get_localized_data_path(Locale.zhCN, "GameStrings.txt"),
             temp_dir,
         )
         # Make sure we copy the Hotkeys.txt file
         if mpq_has_file(
             mpq_extractor_path,
             sc2mod_file,
-            get_localized_data_path(Locale.zhCN, "GameHotkeys"),
+            get_localized_data_path(Locale.zhCN, "GameHotkeys.txt"),
         ):
             mpq_copy_file(
                 mpq_extractor_path,
                 sc2mod_file,
-                get_localized_data_path(Locale.zhCN, "GameHotkeys"),
-                get_localized_data_path(Locale.enUS, "GameHotkeys"),
+                get_localized_data_path(Locale.zhCN, "GameHotkeys.txt"),
+                get_localized_data_path(Locale.enUS, "GameHotkeys.txt"),
             )
             print("[green]Copied GameHotkeys.txt.[/green]")
         else:
@@ -449,7 +455,7 @@ async def process_file(
         if not await translate_file(
             path.join(
                 temp_dir,
-                get_localized_data_path(Locale.zhCN, "GameStrings").rsplit("\\", 1)[-1],
+                get_localized_data_path(Locale.zhCN, "GameStrings.txt").to_file_path().name,
             ),
             leftovers,
             translated_file,
@@ -463,7 +469,7 @@ async def process_file(
             mpq_extractor_path,
             sc2mod_file,
             translated_file,
-            get_localized_data_path(Locale.enUS, "GameStrings"),
+            get_localized_data_path(Locale.enUS, "GameStrings.txt"),
         )
 
         mod_path = pathlib.Path(input_sc2mod_file)
